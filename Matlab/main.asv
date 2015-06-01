@@ -1,0 +1,659 @@
+function [...
+    plotrawboth,...
+    plotmagnetometer,...
+    plotYPRboth,...
+    animation,...
+    canimation,...
+    calanimation,...
+    Covu,...
+    Covf...
+    ] = main(use_mag,filter_type)
+%% Get sensor data
+[tu,tempu,au,mu,gu,tf,tempf,af,mf,gf] = import_data_from_sensors();
+dtu=tu(2)-tu(1);
+dtf=tf(2)-tf(1);
+gyro_gain_degsec = 1/14.375;
+gyro_gain_radsec = gyro_gain_degsec*pi/180.0;
+magn_gain_inv = 1.0/1090.0;
+accel_reference_inv = 1.0/256.0;
+agu=accel_reference_inv*au;
+agf=accel_reference_inv*af;
+gdu=gyro_gain_degsec*gu;
+gdf=gyro_gain_degsec*gf;
+gru=gyro_gain_radsec*gu;
+grf=gyro_gain_radsec*gf;
+mgu=magn_gain_inv*mu;
+mgf=magn_gain_inv*mf;
+
+
+%% Filter data
+addpath('../SW/madgwick_algorithm_matlab');
+addpath('../SW/madgwick_algorithm_matlab/quaternion_library');
+clear AHRS;
+if strcmp(filter_type,'Madgwick')
+    AHRS(1) = MadgwickAHRS('SamplePeriod', dtu, 'Beta', 0.1);
+    AHRS(2) = MadgwickAHRS('SamplePeriod', dtf, 'Beta', 0.05); %0.05
+elseif strcmp(filter_type,'Mahoney')
+    AHRS(1) = MahonyAHRS('SamplePeriod', dtu, 'Kp', 0.5);
+    AHRS(2) = MahonyAHRS('SamplePeriod', dtf, 'Kp', 0.5);
+end
+quaternionu = zeros(length(tu), 4);
+quaternionf = zeros(length(tf), 4);
+if use_mag
+     for t = 1:length(tu)
+         AHRS(1).Update(gru(t,:),agu(t,:),mgu(t,:));
+         quaternionu(t, :) = AHRS(1).Quaternion;
+     end
+     for t=1:length(tf)
+         AHRS(2).Update(grf(t,:),agf(t,:),mgf(t,:));
+         quaternionf(t,:)=AHRS(2).Quaternion;
+     end
+else
+    for t=1:length(tu)
+        AHRS(1).UpdateIMU(gru(t,:),agu(t,:));
+        quaternionu(t,:)=AHRS(1).Quaternion;
+    end
+    for t=1:length(tf)
+        AHRS(2).UpdateIMU(grf(t,:),agf(t,:));
+        quaternionf(t,:)=AHRS(2).Quaternion;
+    end
+end
+clear t;
+
+%%
+if use_mag == false
+    samf=round([50 65]./dtf);
+    samu=round([50 65]./dtu);
+    euler1 = unwrap(quatern2euler(quaternConj(quaternionu))) * 180/pi;
+    euler2 = unwrap(quatern2euler(quaternConj(quaternionf))) * 180/pi;
+    uppeyaw = pi/180*mean(euler1(samu(1):samu(2),3));
+    foreyaw = pi/180*mean(euler2(samf(1):samf(2),3));
+    % Align yaw axes
+    upqy=axisAngle2quatern([0 0 1],uppeyaw);
+    foqy=axisAngle2quatern([0 0 1],foreyaw);
+    uprot=upqy;
+    forot=foqy;
+    for i=1:length(tu)
+        quaternionu(i,:)=quaternProd(uprot,quaternionu(i,:));
+    end
+    for i=1:length(tf)
+        quaternionf(i,:)=quaternProd(forot,quaternionf(i,:));
+    end
+end
+clear uppeyaw foreyaw upqy foqy uprot forot;
+
+
+%% Animation preparation
+base_pos=[0 0 0];
+v_elbow = 0.3*[0 1 0 0];
+v_wrist = 0.3*[0 1 0 0];
+cu=quaternConj(quaternionu);
+cf=quaternConj(quaternionf);
+u=zeros(length(tf),3);
+f=zeros(length(tf),3);
+fu=zeros(length(tf),3);
+for i=1:length(f)
+    idxu=ceil(i*dtf/dtu);
+    temp=quaternProd(quaternionu(idxu,:),quaternProd(v_elbow,cu(idxu,:)));
+    temp(1)=-temp(1); temp(3)=-temp(3); %mirror 3D vector (quat) in z-axis
+    u(i,:)=base_pos+temp(2:4);
+    temp=quaternProd(quaternionf(i,:),quaternProd(v_wrist,cf(i,:)));
+    temp(1)=-temp(1); temp(3)=-temp(3); %mirror 3D vector (quat) in z-axis
+    fu(i,:)=u(i,:)+temp(2:4);
+    f(i,:)=temp(2:4);
+end
+
+
+%%
+addpath('../SW/lsge-matlab');
+%circle1=round([210 236]/dtf);
+%circle1=round([222.8 224.5]/dtf);
+%circle1=round([218 225]./dtf);
+palmdown=65;
+circle1time=[119.5 120.3 122.25 123.8 125.3 126.07];
+circle1u=round(circle1time./dtu);
+circle1=round(circle1time./dtf);
+
+%Sensor to anatomy offset calibration:
+%Z axis is out of palm. Calibrate to gravity when palm faces down
+%Y axis is around anatomical link axis. Calibrate for pronation or
+%supination while arm is held in horizontal position.
+%X axis is perpendicular to Y- and Z-axes.
+%Z axis is orthogonalized so that we have orthonormal basis.
+csZf=af(round(palmdown/dtf),:);
+csZf=csZf/norm(csZf);
+csYf=mean(gf(circle1(1):circle1(2),:));
+csYf=csYf/norm(csYf);
+csXf=cross(csYf,csZf);
+csXf=csXf/norm(csXf);
+csZf=csZf-(dot(csYf,csZf)/dot(csYf,csYf))*csYf;
+csZf=csZf/norm(csZf);
+%Upper arm coordinate system simply follows forearm system:
+csZu=au(round(palmdown/dtu),:);
+csZu=csZu/norm(csZu);
+csYu=mean(gu(circle1u(1):circle1u(2),:));
+csYu=csYu/norm(csYu);
+csXu=cross(csYu,csZu);
+csXu=csXu/norm(csXu);
+csZu=csZu-(dot(csYu,csZu)/dot(csYu,csYu))*csYu;
+csZu=csZu/norm(csZu);
+%Quaternion form is good practice:
+qRu=rotMat2quatern([csYu' csXu' csZu']);
+%qRu=rotMat2quatern([csYu' csZu' csXu']);
+qRf=rotMat2quatern([csYf' csXf' csZf']);
+cqRu=quaternConj(qRu);
+cqRf=quaternConj(qRf);
+%clear csXu csYu csZu csXf csYf csZf;
+%Adjust rotated vectors so that sensors are better aligned with anatomy.
+%celbow=quaternProd(qRu,quaternProd(v_elbow,cqRu));
+%cwrist=quaternProd(qRf,quaternProd(v_wrist,cqRf));
+%The order is important: Sensor->anatomy is not anatomy->sensor
+celbow=quaternProd(cqRu,quaternProd(v_elbow,qRu));
+cwrist=quaternProd(cqRf,quaternProd(v_wrist,qRf));
+
+%Plot preparation:
+u1=zeros(length(tf),3);
+f1=zeros(length(tf),3);
+fu1=zeros(length(tf),3);
+for i=1:length(f1)
+    idxu=ceil(i*dtf/dtu);
+    temp=quaternProd(quaternionu(idxu,:),quaternProd(celbow,cu(idxu,:)));
+    temp(1)=-temp(1); temp(3)=-temp(3); %mirror 3D vector (quat) in z-axis
+    u1(i,:)=base_pos+temp(2:4);
+    temp=quaternProd(quaternionf(i,:),quaternProd(cwrist,cf(i,:)));
+    temp(1)=-temp(1); temp(3)=-temp(3); %mirror 3D vector (quat) in z-axis
+    fu1(i,:)=u1(i,:)+temp(2:4);
+    f1(i,:)=temp(2:4);
+end
+
+%% PCA version
+%Arm is rotated about anatomy z-axis and then about arm y-axis:
+oneaxismovements=[119 146]; 
+oneaxisu=round(oneaxismovements./dtu);
+oneaxisf=round(oneaxismovements./dtf);
+ pcaRotMatu=pca([gu(oneaxisu(1):oneaxisu(2),1),...
+     gu(oneaxisu(1):oneaxisu(2),3),...
+     gu(oneaxisu(1):oneaxisu(2),2)]);
+%pcaRotMatu=pca(gu(oneaxisu(1):oneaxisu(2),:));
+pcaRotMatf=pca([gf(oneaxisf(1):oneaxisf(2),1),...
+    gf(oneaxisf(1):oneaxisf(2),3),...
+    gf(oneaxisf(1):oneaxisf(2),2)]);
+pcaqRu=rotMat2quatern(pcaRotMatu);
+pcaqRf=rotMat2quatern(pcaRotMatf);
+cpcaqRu=quaternConj(pcaqRu);
+cpcaqRf=quaternConj(pcaqRf);
+
+%Adjust rotated vectors so that sensors are better aligned with anatomy.
+%The order is important: Sensor->anatomy is not anatomy->sensor
+pcaelbow=quaternProd(cpcaqRu,quaternProd(v_elbow,pcaqRu));
+pcawrist=quaternProd(cpcaqRf,quaternProd(v_wrist,pcaqRf));
+
+%Plot preparation:
+u2=zeros(length(tf),3);
+f2=zeros(length(tf),3);
+fu2=zeros(length(tf),3);
+for i=1:length(f2)
+    idxu=ceil(i*dtf/dtu);
+    temp=quaternProd(quaternionu(idxu,:),quaternProd(pcaelbow,cu(idxu,:)));
+    temp(1)=-temp(1); temp(3)=-temp(3); %mirror 3D vector (quat) in z-axis
+    u2(i,:)=base_pos+temp(2:4);
+    temp=quaternProd(quaternionf(i,:),quaternProd(pcawrist,cf(i,:)));
+    temp(1)=-temp(1); temp(3)=-temp(3); %mirror 3D vector (quat) in z-axis
+    fu2(i,:)=u2(i,:)+temp(2:4);
+    f2(i,:)=temp(2:4);
+end
+
+
+%% Comparison of covariances
+gfa=[gdf(:,2) gdf(:,1) gdf(:,3)];
+for i=1:length(gfa)
+    temp=quaternProd(cpcaqRf,quaternProd([0 gfa(i,:)],pcaqRf));
+    gfap(i,:)=temp(2:4);
+    temp=quaternProd(cqRf,quaternProd([0 gfa(i,:)],qRf));
+    gfag(i,:)=temp(2:4);
+end
+gua=[gdu(:,2) gdu(:,1) gdu(:,3)];
+for i=1:length(gua)
+    temp=quaternProd(cpcaqRu,quaternProd([0 gua(i,:)],pcaqRu));
+    guap(i,:)=temp(2:4);
+    temp=quaternProd(cqRu,quaternProd([0 gua(i,:)],qRu));
+    guag(i,:)=temp(2:4);
+end
+Covu=[cov(gfa(oneaxisf(1):oneaxisf(2),:)) cov(gfag(oneaxisf(1):oneaxisf(2),:)) cov(gfap(oneaxisf(1):oneaxisf(2),:))];
+Covf=[cov(gua(oneaxisu(1):oneaxisu(2),:)) cov(guag(oneaxisu(1):oneaxisu(2),:)) cov(guap(oneaxisu(1):oneaxisu(2),:))];
+
+
+%% Upper arm length estimation through double integration of acceleration
+% Waving motion analysis
+% waving1: Peak times of oscillatory flapping motion of entire arm.
+% waving2: Peak times of oscillatory elbow flexion/extension.
+waving1=[148 148.45 149.105 149.82 150.46 151.1 151.75 152.38 152.975 153.7 155];
+waving2=[155 155.28 155.955 156.57 157.26 157.87 158.535 159.195 159.85 160.5 161];
+waving1u=round(waving1./dtu);
+waving1f=round(waving1./dtf);
+waving2u=round(waving2./dtu);
+waving2f=round(waving2./dtf);
+%Tilt compensation of acceleration:
+%Rotate acceleration vectors according to filtered orientations
+tcagu=zeros(size(agu));
+tcagf=zeros(size(agf));
+for i=1:length(agu)
+    temp=quaternProd(quaternionu(i,:),quaternProd([0 agu(i,:)],cu(i,:)));
+    tcagu(i,:)=temp(2:4); %temp(2:4) is the vector part of the quaternion
+end
+for i=1:length(agf)
+    temp=quaternProd(quaternionf(i,:),quaternProd([0 agf(i,:)],cf(i,:)));
+    tcagf(i,:)=temp(2:4);
+end
+%Gravity subtraction so that only linear acceleration remains:
+%Acceleration is already tilt compensated, so subtraction is in z-axis.
+%Since acceleration is already in g, subtraction is by 1.
+gravsub=[zeros(max(length(tcagu),length(tcagf)),2),...
+    ones(max(length(tcagu),length(tcagf)),1)];
+linau=tcagu-gravsub(1:length(tcagu),:);
+linaf=tcagf-gravsub(1:length(tcagf),:);
+clear gravsub;
+g_to_m_per_s_squared=9.82;
+linau=linau*g_to_m_per_s_squared;
+linaf=linaf*g_to_m_per_s_squared;
+%Integration of linear acceleration to velocity:
+%Assumption 1: Linear velocity is zero at beginning.
+%Assumption 2: Oscillatory movement (velocity changes signs regularly).
+%Since this is offline data processing, we might as well use Trapez method.
+linvu=zeros(size(linau)); % Assumption 1
+linvf=zeros(size(linaf));
+linvu(2:length(linau),:)=dtu*cumtrapz(linau(2:length(linau),:));
+linvf(2:length(linaf),:)=dtf*cumtrapz(linaf(2:length(linaf),:));
+%% High pass filtering (assumption 2):
+vel_order = 1;
+vel_cutoff_u = 0.24; %Tuned values
+vel_cutoff_f = 0.07;
+[vbu,vau]=butter(vel_order,(2*vel_cutoff_u)*dtu,'high');
+[vbf,vaf]=butter(vel_order,(2*vel_cutoff_f)*dtf,'high');
+linvhpu=filtfilt(vbu,vau,linvu);
+linvhpf=filtfilt(vbf,vaf,linvf);
+
+%Remove DC
+linvhpu(:,1)=linvhpu(:,1)-mean(linvhpu(:,1));
+linvhpu(:,2)=linvhpu(:,2)-mean(linvhpu(:,2));
+linvhpu(:,3)=linvhpu(:,3)-mean(linvhpu(:,3));
+linvhpf(:,1)=linvhpf(:,1)-mean(linvhpf(:,1));
+linvhpf(:,2)=linvhpf(:,2)-mean(linvhpf(:,2));
+linvhpf(:,3)=linvhpf(:,3)-mean(linvhpf(:,3));
+
+%Integration of linear velocity to position:
+%Assumption 1: Position is zero at beginning.
+%Assumption 2: Oscillatory movement (position changes signs regularly).
+%Again, we use Trapez method for integration.
+linpu=zeros(size(linvhpu));
+linpf=zeros(size(linvhpf));
+linpu(2:length(linvhpu),:)=dtu*cumtrapz(linvhpu(2:length(linvhpu),:));
+linpf(2:length(linvhpf),:)=dtf*cumtrapz(linvhpf(2:length(linvhpf),:));
+%High pass filtering of linear position:
+pos_order = 1;
+pos_cutoff_u = 0.22; %Tuned values
+pos_cutoff_f = 0.06;
+[pbu,pau]=butter(pos_order,(2*pos_cutoff_u)*dtu,'high');
+[pbf,paf]=butter(pos_order,(2*pos_cutoff_f)*dtf,'high');
+linphpu=filtfilt(pbu,pau,linpu);
+linphpf=filtfilt(pbf,paf,linpf);
+
+%Remove DC
+linphpu(:,1)=linphpu(:,1)-mean(linphpu(:,1));
+linphpu(:,2)=linphpu(:,2)-mean(linphpu(:,2));
+linphpu(:,3)=linphpu(:,3)-mean(linphpu(:,3));
+linphpf(:,1)=linphpf(:,1)-mean(linphpf(:,1));
+linphpf(:,2)=linphpf(:,2)-mean(linphpf(:,2));
+linphpf(:,3)=linphpf(:,3)-mean(linphpf(:,3));
+
+% Get radii of waving motion to determine distance from shoulder to forearm
+% IMU.
+itu = 1;
+itf = 1;
+for i=3:(length(waving1)-3)
+    %[center,normal,radius,sigmah,convergence] = getCircle(X,b_plot,fignum)
+    [~,~,ru,~,convu] = getCircle(linphpu(waving1u(i):waving1u(i+1),:),false,6);
+    [~,~,rf,~,convf] = getCircle(linphpf(waving1f(i):waving1f(i+1),:),false,7);
+    if convu
+        radius1u(itu)=ru;
+        itu=itu+1;
+    end
+    if convf
+        radius1f(itf)=rf;
+        itf=itf++1;
+    end
+end
+shoulder_to_u = mean(radius1u);
+shoulder_to_f = mean(radius1f);
+%display(shoulder_to_u);
+%display(shoulder_to_f);
+
+% Get radius of forearm IMU motion for flexion/extension of elbow while
+% upper arm is being held still.
+% Since upper arm is not being held perfectly still, the linear motion of
+% the elbow point must be subtracted from the motion of the forearm IMU
+% being analyzed here. However, we don't know the elbow vector (yet), and
+% our current best approximation is the upper arm IMU position. We will
+% subtract this from the position of the forearm IMU to cancel some of the
+% unwanted motion of the upper arm.
+itu = 1;
+itf = 1;
+linphpuext=zeros(size(linphpf));
+for i=1:length(linphpuext)
+    idxu=ceil(i*dtf/dtu);
+    linphpuext(i,:)=linphpu(idxu,:);
+end
+linphpfext=linphpf-linphpuext; %Subtract upper arm pos. from forearm pos.
+clear linphpuext;
+
+% Get radius of forearm IMU motion
+for i=3:(length(waving2)-3)
+    [~,~,rf,~,convf] = getCircle(linphpf(waving2f(i):waving2f(i+1),:),false,7);
+    if convf
+        radius2f(itf)=rf;
+        itf=itf++1;
+    end
+end
+elbow_to_f=mean(radius2f);
+shoulder_to_elbow=shoulder_to_f-elbow_to_f;
+%display(shoulder_to_elbow)
+
+%elbow=shoulder_to_elbow*celbow/norm(celbow);
+%wrist=elbow_to_f*cwrist/norm(cwrist);
+elbow=shoulder_to_elbow*pcaelbow/norm(pcaelbow);
+wrist=elbow_to_f*pcawrist/norm(pcawrist);
+
+%% Animation preparation
+calu=zeros(length(tf),3);
+calf=zeros(length(tf),3);
+calfu=zeros(length(tf),3);
+for i=1:length(calf)
+    idxu=ceil(i*dtf/dtu);
+    temp=quaternProd(quaternionu(idxu,:),quaternProd(elbow,cu(idxu,:)));
+    temp(1)=-temp(1); temp(3)=-temp(3); %mirror 3D vector (quat) in z-axis
+    calu(i,:)=base_pos+temp(2:4);
+    temp=quaternProd(quaternionf(i,:),quaternProd(wrist,cf(i,:)));
+    temp(1)=-temp(1); temp(3)=-temp(3); %mirror 3D vector (quat) in z-axis
+    calfu(i,:)=calu(i,:)+temp(2:4);
+    calf(i,:)=temp(2:4);
+end
+
+
+%% functions
+%% Plot sensor data
+    function fplotrawboth
+        %%
+        x0f=round(60/dtf);
+        x0u=round(60/dtu);
+        addpath('subtightplot');
+        addpath('tightfig');
+        subplot = @(m,n,p) subtightplot (m, n, p, [0.02 0.06], [0.05 0.03], [0.075 0.02]);
+        a1(1) = subplot(3,2,1);
+        plot(tu(x0u:end),agu(x0u:end,:));ylabel('\(a\) [g]','Interpreter','latex');
+        set(gca,'XTickLabel',[]);
+        grid on;
+        title('Upper arm');
+        a2(1) = subplot(3,2,2);
+        plot(tf(x0f:end),agf(x0f:end,:));%ylabel('\(a\) [g]','Interpreter','latex');
+        set(gca,'XTickLabel',[]);
+        grid on;
+        title('Forearm');
+        a1(2) = subplot(3,2,3);
+        plot(tu(x0u:end),mgu(x0u:end,:));ylabel('\(H\) [G]','Interpreter','latex');
+        set(gca,'XTickLabel',[]);
+        grid on;
+        a2(2) = subplot(3,2,4);
+        plot(tf(x0f:end),mgf(x0f:end,:));%ylabel('\(H\) [G]','Interpreter','latex');
+        set(gca,'XTickLabel',[]);
+        grid on;
+        a1(3) = subplot(3,2,5);
+        plot(tu(x0u:end),gdu(x0u:end,:)); xlabel('Time [s]'); ylabel('\(\omega\) \(\left[^{\circ}/\textbf{s}\right]\)','Interpreter','latex');
+        grid on;
+        a2(3) = subplot(3,2,6);
+        plot(tf(x0f:end),gdf(x0f:end,:)); xlabel('Time [s]'); %ylabel('\(\omega\) \(\left[^{\circ}/\textbf{s}\right]\)','Interpreter','latex');
+        grid on;
+        linkaxes([a1 a2],'x');
+        tightfig();
+        clear a1 a2 subplot;
+    end
+plotrawboth=@fplotrawboth;
+    function fplotmagnetometer
+        %%
+        axis vis3d;
+        hold on;
+        grid on;
+        camproj orthographic;
+        rotate3d on;
+        view(-161,12);
+        plot3(mgu(:,1),mgu(:,2),mgu(:,3),'bx');
+        plot3(mgf(:,1),mgf(:,2),mgf(:,3),'rx');
+        legend('Upper arm','Forearm');
+        xlabel('Flux density (Gauss)');
+        ylabel('Flux density (Gauss)');
+        zlabel('Flux density (Gauss)');
+        hold off;
+    end
+plotmagnetometer=@fplotmagnetometer;
+%%
+    function fplotYPRboth
+        %% Quaternion to ZYX Euler angles
+        % [phi' theta' psi']
+        % phi is around X, theta is around Y and psi is around Z.
+        % For some reason, this library thinks Euler angles are Yaw, Pitch
+        % Roll...
+        addpath('subtightplot');
+        addpath('tightfig');
+        subplot = @(m,n,p) subtightplot (m, n, p, [0.02 0.08], [0.05 0.02], [0.075 0.02]);
+        euler1 = unwrap(quatern2euler(quaternConj(quaternionu))) * 180/pi;
+        euler2 = unwrap(quatern2euler(quaternConj(quaternionf))) * 180/pi;
+        ax(1)=subplot(2,1,1);
+        plot(tu, euler1);
+        grid on;
+        set(ax(1),'XTickLabel',[]);
+        %title('Upper arm');
+        %xlabel('Time [s]');
+        ylabel('Upper arm angle [°]');
+        legend('\phi (X)', '\theta (Y)', '\psi (Z)', 'Location','SouthWest');
+        ax(2)=subplot(2,1,2);
+        plot(tf, euler2);
+        grid on;
+        %title('Forearm');
+        xlabel('Time [s]');
+        ylabel('Forearm angle [°]');
+        legend('\phi (X)', '\theta (Y)', '\psi (Z)', 'Location','SouthWest');
+        linkaxes(ax,'x');
+    end
+plotYPRboth=@fplotYPRboth;
+%%
+    function fanimation
+        %%
+        init_frame=[0.2 0.2 0.2 0.2 ; 0 0 0 1];
+        axis(0.8*[-1 1 -1 1 -1 1]);
+        axis vis3d;
+        hold on;
+        view(100,10);
+        grid on;
+        camproj orthographic;
+        rotate3d on;
+        plot3([0, init_frame(1,1), nan, 0, 0, nan, 0, 0],...
+            [0, 0, nan, 0, 0, nan, 0, 0],...
+            [0, 0, nan, 0, 0, nan, 0, 0],'r',...
+            [0, 0, nan, 0, 0, nan, 0, 0],...
+            [0, 0, nan, 0, init_frame(1,2), nan, 0, 0],...
+            [0, 0, nan, 0, 0, nan, 0, 0],'g',...
+            [0, 0, nan, 0, 0, nan, 0, 0],...
+            [0, 0, nan, 0, 0, nan, 0, 0],...
+            [0, 0, nan, 0, 0, nan, 0, init_frame(1,3)],'b','LineWidth',3);
+        ph5=plot3(...
+            [base_pos(1) u(1,1); u(1,1) fu(1,1)],...
+            [base_pos(2) u(1,2); u(1,2) fu(1,2)],...
+            [base_pos(3) u(1,3); u(1,3) fu(1,3)],...
+            'ob-','MarkerFaceColor','b');
+        for i=1:length(f)
+            set(ph5(1),'XData',[base_pos(1) u(i,1)],...
+                'YData',[base_pos(2) u(i,2)],...
+                'ZData',[base_pos(3) u(i,3)]);
+            set(ph5(2),'XData',[u(i,1) fu(i,1)],...
+                'YData',[u(i,2) fu(i,2)],...
+                'ZData',[u(i,3) fu(i,3)]);
+            title(strcat('Time [s]: ',num2str(dtf*i)));
+            drawnow
+        end
+    end
+animation=@fanimation;
+function fcanimation
+        %%
+        init_frame=[0.2 0.2 0.2 0.2 ; 0 0 0 1];
+        axis(0.8*[-1 1 -1 1 -1 1]);
+        axis vis3d;
+        hold on;
+        view(100,10);
+        grid on;
+        camproj orthographic;
+        rotate3d on;
+        plot3([0, init_frame(1,1), nan, 0, 0, nan, 0, 0],...
+            [0, 0, nan, 0, 0, nan, 0, 0],...
+            [0, 0, nan, 0, 0, nan, 0, 0],'r',...
+            [0, 0, nan, 0, 0, nan, 0, 0],...
+            [0, 0, nan, 0, init_frame(1,2), nan, 0, 0],...
+            [0, 0, nan, 0, 0, nan, 0, 0],'g',...
+            [0, 0, nan, 0, 0, nan, 0, 0],...
+            [0, 0, nan, 0, 0, nan, 0, 0],...
+            [0, 0, nan, 0, 0, nan, 0, init_frame(1,3)],'b','LineWidth',3);
+        ph5=plot3(...
+            [base_pos(1) u1(1,1); u1(1,1) fu1(1,1)],...
+            [base_pos(2) u1(1,2); u1(1,2) fu1(1,2)],...
+            [base_pos(3) u1(1,3); u1(1,3) fu1(1,3)],...
+            'ob-','MarkerFaceColor','b');
+        ph6=plot3(...
+            [base_pos(1) u(1,1); u(1,1) fu(1,1)],...
+            [base_pos(2) u(1,2); u(1,2) fu(1,2)],...
+            [base_pos(3) u(1,3); u(1,3) fu(1,3)],...
+            'xg-','MarkerFaceColor','g');
+        ph7=plot3(...
+            [base_pos(1) u2(1,1); u2(1,1) fu2(1,1)],...
+            [base_pos(2) u2(1,2); u2(1,2) fu2(1,2)],...
+            [base_pos(3) u2(1,3); u2(1,3) fu2(1,3)],...
+            '^r-','MarkerFaceColor','r');
+        for i=round(119/dtf):length(f1)
+            set(ph5(1),'XData',[base_pos(1) u1(i,1)],...
+                'YData',[base_pos(2) u1(i,2)],...
+                'ZData',[base_pos(3) u1(i,3)]);
+            set(ph5(2),'XData',[u1(i,1) fu1(i,1)],...
+                'YData',[u1(i,2) fu1(i,2)],...
+                'ZData',[u1(i,3) fu1(i,3)]);
+            set(ph6(1),'XData',[base_pos(1) u(i,1)],...
+                'YData',[base_pos(2) u(i,2)],...
+                'ZData',[base_pos(3) u(i,3)]);
+            set(ph6(2),'XData',[u(i,1) fu(i,1)],...
+                'YData',[u(i,2) fu(i,2)],...
+                'ZData',[u(i,3) fu(i,3)]);
+            set(ph7(1),'XData',[base_pos(1) u2(i,1)],...
+                'YData',[base_pos(2) u2(i,2)],...
+                'ZData',[base_pos(3) u2(i,3)]);
+            set(ph7(2),'XData',[u2(i,1) fu2(i,1)],...
+                'YData',[u2(i,2) fu2(i,2)],...
+                'ZData',[u2(i,3) fu2(i,3)]);
+            title(strcat('Time [s]: ',num2str(dtf*i)));
+            drawnow
+        end
+    end
+canimation=@fcanimation;
+    function fcalanimation
+        %%
+        init_frame=[0.2 0.2 0.2 0.2 ; 0 0 0 1];
+        axis(0.8*[-1 1 -1 1 -1 1]);
+        axis vis3d;
+        hold on;
+        view(100,10);
+        grid on;
+        camproj orthographic;
+        rotate3d on;
+        plot3([0, init_frame(1,1), nan, 0, 0, nan, 0, 0],...
+            [0, 0, nan, 0, 0, nan, 0, 0],...
+            [0, 0, nan, 0, 0, nan, 0, 0],'r',...
+            [0, 0, nan, 0, 0, nan, 0, 0],...
+            [0, 0, nan, 0, init_frame(1,2), nan, 0, 0],...
+            [0, 0, nan, 0, 0, nan, 0, 0],'g',...
+            [0, 0, nan, 0, 0, nan, 0, 0],...
+            [0, 0, nan, 0, 0, nan, 0, 0],...
+            [0, 0, nan, 0, 0, nan, 0, init_frame(1,3)],'b','LineWidth',3);
+        ph5=plot3(...
+            [base_pos(1) calu(1,1); calu(1,1) calfu(1,1)],...
+            [base_pos(2) calu(1,2); calu(1,2) calfu(1,2)],...
+            [base_pos(3) calu(1,3); calu(1,3) calfu(1,3)],...
+            'ob-','MarkerFaceColor','b');
+        for i=1:length(calf)
+            set(ph5(1),'XData',[base_pos(1) calu(i,1)],...
+                'YData',[base_pos(2) calu(i,2)],...
+                'ZData',[base_pos(3) calu(i,3)]);
+            set(ph5(2),'XData',[calu(i,1) calfu(i,1)],...
+                'YData',[calu(i,2) calfu(i,2)],...
+                'ZData',[calu(i,3) calfu(i,3)]);
+            title(strcat('Time [s]: ',num2str(dtf*i)));
+            drawnow
+        end
+    end
+calanimation=@fcalanimation;
+    function fplotlinvel
+        %%
+        ax(1)=subplot(2,1,1);
+        plot(tu(waving1u(1):waving1u(end)),linvu(waving1u(1):waving1u(end),:));
+        ylabel('Upper arm \(v\) [m/s]','Interpreter','latex');
+        title('Linear velocity');
+        grid on;
+        ax(2)=subplot(2,1,2);
+        plot(tf(waving1f(1):waving1f(end)),linvf(waving1f(1):waving1f(end),:));
+        ylabel('Forearm \(v\) [m/s]','Interpreter','latex');
+        xlabel('Time [s]');
+        grid on;
+        linkaxes(ax,'x');
+    end
+plotlinvel=@fplotlinvel;
+    function fplotlinvelhp
+        %%
+        ax(1)=subplot(2,1,1);
+        plot(tu(waving1u(1):waving1u(end)),linvhpu(waving1u(1):waving1u(end),:));
+        ylabel('Upper arm \(v\) [m/s]','Interpreter','latex');
+        title('Linear velocity, high pass filtered');
+        ax(2)=subplot(2,1,2);
+        plot(tf(waving1f(1):waving1f(end)),linvhpf(waving1f(1):waving1f(end),:));
+        ylabel('Forearm \(v\) [m/s]','Interpreter','latex');
+        xlabel('Time [s]');
+        linkaxes(ax,'x');
+    end
+plotlinvelhp=@fplotlinvelhp;
+    function fplotlinpos
+        %%
+        ax(1)=subplot(2,1,1);
+        plot(tu(waving1u(1):waving1u(end)),linpu(waving1u(1):waving1u(end),:));
+        title('Linear position');
+        ylabel('Upper arm \(s\) [m]','Interpreter','latex');
+        grid on;
+        ax(2)=subplot(2,1,2);
+        plot(tf(waving1f(1):waving1f(end)),linpf(waving1f(1):waving1f(end),:));
+        ylabel('Upper arm \(s\) [m]','Interpreter','latex');
+        grid on;
+        linkaxes(ax,'x');
+    end
+plotlinpos=@fplotlinpos;
+    function fplotlinposhp
+        %%
+        ax(1)=subplot(2,1,1);
+        plot(tu(waving1u(1):waving1u(end)),linphpu(waving1u(1):waving1u(end),:));
+        ax(2)=subplot(2,1,2);
+        plot(tf(waving1f(1):waving1f(end)),linphpf(waving1f(1):waving1f(end),:));
+        linkaxes(ax,'x');
+        title('Linear position, high pass filtered');
+    end
+plotlinposhp=@fplotlinposhp;
+    function linposhpanimate
+        %%
+        plot3(linphpu(waving1u(2):waving1u(3),1),...
+            linphpu(waving1u(2):waving1u(3),2),...
+            linphpu(waving1u(2):waving1u(3),3),'b-'); hold on;
+        plot3(linphpf(waving1f(2):waving1f(3),1),...
+            linphpf(waving1f(2):waving1f(3),2),...
+            linphpf(waving1f(2):waving1f(3),3),'r-'); hold off;
+    end
+end

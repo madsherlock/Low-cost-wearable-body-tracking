@@ -1,0 +1,59 @@
+# Kjeld's board
+brd_cal = 1
+id0 = 'k'
+id1 = 'j'
+accel_min_x = -260.0
+accel_max_x =  282.0
+accel_min_y = -263.0
+accel_max_y =  272.0
+accel_min_z = -281.0
+accel_max_z =  249.0
+#kj
+gyro_offset_x = 8.2550134010816
+gyro_offset_y = 16.973147272273
+gyro_offset_z = -1.470044148519
+gyro_working_temperature = 27.0
+gyro_temperature_sensitivity_x = -1.9626614997639
+gyro_temperature_sensitivity_y = 2.1757821313905
+gyro_temperature_sensitivity_z = 0.94942374954821
+magn_temperature_sensitivity_x = -0.1660057529847
+magn_temperature_sensitivity_y = 0.12337405441785
+magn_temperature_sensitivity_z = 1.5230705869173
+#gyro_time_variance_x = 0.48807351967475
+#gyro_time_variance_y = 0.55012915524539
+#gyro_time_variance_z = 0.4188652219256
+#magn_time_variance_x = 2.94948895942
+#magn_time_variance_y = 3.1139365579795
+#magn_time_variance_z = 2.7162813408741
+#acc_time_variance_x = 5.503655576362
+#acc_time_variance_y = 6.9990102420093
+#acc_time_variance_z = 29.796829948922
+
+# Magnetic field at school
+magn_ellipsoid_center_x = 197.551197612
+magn_ellipsoid_center_y = -54.4337187554
+magn_ellipsoid_center_z = -42.2909751335
+magn_ellipsoid_transform_0_0 = 0.741357075202
+magn_ellipsoid_transform_0_1 = 0.0489055916098
+magn_ellipsoid_transform_0_2 = 0.0453366409028
+magn_ellipsoid_transform_1_0 = 0.0489055916098
+magn_ellipsoid_transform_1_1 = 0.900998816079
+magn_ellipsoid_transform_1_2 = -0.0167127968941
+magn_ellipsoid_transform_2_0 = 0.0453366409028
+magn_ellipsoid_transform_2_1 = -0.0167127968941
+magn_ellipsoid_transform_2_2 = 0.991314802459
+magn_working_temperature = 32.2752647400
+
+# Magnetic field at home
+magn_ellipsoid_center_x = 188.308471483
+magn_ellipsoid_center_y = -57.8427448833
+magn_ellipsoid_center_z = -35.4422851220
+magn_ellipsoid_transform_0_0 = 0.750610757728
+magn_ellipsoid_transform_0_1 = 0.0513357500940
+magn_ellipsoid_transform_0_2 = 0.0502734411649
+magn_ellipsoid_transform_1_0 = 0.0513357500940
+magn_ellipsoid_transform_1_1 = 0.910148012738
+magn_ellipsoid_transform_1_2 = -0.0187469094612
+magn_ellipsoid_transform_2_0 = 0.0502734411649
+magn_ellipsoid_transform_2_1 = -0.0187469094612
+magn_ellipsoid_transform_2_2 = 0.988975962957

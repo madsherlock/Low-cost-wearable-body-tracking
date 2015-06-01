@@ -1,0 +1,32 @@
+Shut up:
+#o0#oe0
+
+Compensation setup
+Acc yes, gyro yes, magn yes (not temperature)
+#Mcoa1
+#Mcog1
+#Mcog3
+#Mcom1
+#Mcom2
+
+Output EEPROM test
+#o0#oe0
+#Mtwp
+#Mtr
+
+Float test
+#o0#oe0
+#Mtf
+<float>
+
+
+
+
+
+
+def packAsFloat(value):
+    return struct.pack('f',value)
+
+ser1.write('#Mtf')
+
+ser1.write(packAsFloat(testfloat))

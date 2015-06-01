@@ -1,0 +1,20 @@
+#bi
+gyro_offset_x = 8.5534897260611
+gyro_offset_y = -1.0483657731485
+gyro_offset_z = -6.6021161773221
+gyro_working_temperature = 27.0
+gyro_temperature_sensitivity_x = 1.6101594084482
+gyro_temperature_sensitivity_y = 0.34858360861777
+gyro_temperature_sensitivity_z = -0.47748384606518
+magn_temperature_sensitivity_x = -0.56177638265379
+magn_temperature_sensitivity_y = 0.48387583017262
+magn_temperature_sensitivity_z = 1.6289980329712
+#gyro_time_variance_x = 0.68521718710764
+#gyro_time_variance_y = 0.75400783227888
+#gyro_time_variance_z = 0.52886686970828
+#magn_time_variance_x = 2.6919506620929
+#magn_time_variance_y = 2.8808530867858
+#magn_time_variance_z = 3.5746200538334
+#acc_time_variance_x = 2.0407347445276
+#acc_time_variance_y = 2.3999029546286
+#acc_time_variance_z = 4.5954596365228
